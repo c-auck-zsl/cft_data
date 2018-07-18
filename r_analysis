@@ -1,0 +1,271 @@
+## ______________________________________________________
+## 
+## Analysis of baseline carbon emissions from CFT output
+##_______________________________________________________
+##
+
+## read in and organise data ----
+workingdir<-"C:/Users/varah.a/Desktop/Documents/Black Grass Resistance Initiative/Economics/Cost of BG infestation"
+setwd(workingdir)
+FieldInfo <- read.csv("FieldRegions.csv", header = T)
+
+workingdir<-"C:/Users/varah.a/Desktop/Documents/Black Grass Resistance Initiative/Carbon/BaselineEmissions"
+setwd(workingdir)
+co2 <- read.csv("CO2allVariables.csv", header = T)
+#any(is.na(co2))
+noherb <- read.csv("CO2noHerb.csv", header = T)
+notill <- read.csv("CO2noTill.csv", header = T)
+
+#head(co2)
+#names(co2)
+#names(noherb)
+#names(notill)
+
+# add output from no herb (tillage only) run
+co2$noH.tot <- noherb$CO2.Total[match(co2$Field.ID, noherb$Field.ID)] 
+co2$noH.fuel <- noherb$Fuel[match(co2$Field.ID, noherb$Field.ID)] 
+
+# add output from no tillage (herb only) run
+co2$noT.tot <- notill$CO2.Total[match(co2$Field.ID, notill$Field.ID)] 
+co2$noT.fuel <- notill$Fuel[match(co2$Field.ID, notill$Field.ID)] 
+
+names(co2)[names(co2) =='Field.Name'] <- "field"
+names(co2)[names(co2) =='Field.ID'] <- "id"
+names(co2)[names(co2) =='Crop'] <- "crop"
+names(co2)[names(co2) =='CO2.Total'] <- "tot"
+names(co2)[names(co2) =='CO2.Pest'] <- "pest"
+names(co2)[names(co2) =='N.Fert'] <- "fert"
+names(co2)[names(co2) =='Fuel'] <- "fuel"
+names(co2)[names(co2) =='noH.fuel'] <- "fuelfromtill"
+names(co2)[names(co2) =='noT.fuel'] <- "fuelfromspray"
+
+head(co2)
+
+# extract year from ID
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+co2$id <- as.character(co2$id)
+co2$year <- substrRight(co2$id, 4)
+head(co2)
+co2$year <- as.numeric(co2$year)
+co2$id <- as.factor(co2$id)
+
+# create new variables
+# column of emissions from herbicide manufacture plus spraying (Hms) (i.e. total emissions due to herb use)
+co2$Hms <- co2$pest+co2$fuelfromspray
+# column of total emissions with herbicide excluded
+co2$till <- co2$noH.tot - co2$fert
+# column of total emissions with tillage excluded (**** NB: 17-07-2018 this won't be right yet until models re-run ****)
+co2$herb <- co2$noT.tot - co2$fert
+
+# add in regions and density states
+co2$region <- FieldInfo$Region[match(co2$field, FieldInfo$fieldname)]
+co2$density <- FieldInfo$den[match(co2$field, FieldInfo$fieldname)]
+co2$region <- as.factor(co2$region)
+co2$density <- as.factor(co2$density)
+# re-order columns
+co2 <- co2[c("id","field","year","region","density","crop","tot", "noH.tot","noT.tot","pest","fert","fuel","fuelfromtill","fuelfromspray","Hms","till","herb")]
+
+head(co2)
+
+
+## Look at C emissions in winter wheat ----
+# pull out winter wheat
+suppressMessages(library(dplyr))
+Cww <- co2 %>% 
+  filter(crop=="Winter wheat") %>%
+  select(id, field, year, region, density, tot, noH.tot,  noT.tot,  pest, fert, fuel, fuelfromtill, fuelfromspray, Hms, herb, till)
+head(Cww)
+
+# plot total emissions
+suppressMessages(library(ggplot2))
+ggplot(Cww, aes(year, tot)) + geom_point()
+
+#plot (tot ~ year, data=Cww)
+#text(Cww$tot, Cww$year, labels=Cww$field, cex= 0.7)
+# two fields have very high values
+which(Cww$tot >6000)
+Cww[75,]
+Cww[183,]
+# fields 1_hermitage and 2_court have very high emissions in even years
+# this is due to extremely high fertiliser application rates in those years
+
+
+Cww$year <- as.factor(Cww$year)
+boxplot(Cww$tot~Cww$year,
+        main=expression(paste("Total C (winter wheat)", O[2], " emissions")),
+        xlab="Year", 
+        ylab=expression(paste("Carbon emissions, kg C ", O[2], " equiv")))
+
+# exclude the two outliers
+boxplot(Cww$tot~Cww$year,outline=FALSE,
+        main=expression(paste("Total C (winter wheat)", O[2], " emissions")),
+        cex.axis=0.95,
+        xlab="Year",
+        ylab=expression(paste("Carbon emissions, kg C ", O[2], " equiv")))
+
+
+## CALCULATE SUMMARY STATS BY YEAR, REGION, DENSITY STATE - then plot ----
+
+standard.error <- function(x) {
+  sqrt(var(x)/length(x))
+}
+
+
+## calculate summary stats grouped by year, then plot ----
+head(Cww)
+# exclude outliers
+C <- Cww[ which( Cww$tot < 6000), ]
+head(C)
+
+#needs library(dplyr)
+head(C)
+class(C)
+CO2ww.year <-  C %>% 
+                group_by(year) %>%
+                  summarise_at(.vars = vars(tot,noH.tot,noT.tot,pest,fert,fuel,fuelfromtill,fuelfromspray,Hms,herb,till),
+                               .funs = c(mean="mean", sd="sd" , se="standard.error"))
+
+head(CO2ww.year)
+# NB. this is a tibble not a dataframe. To convert to data.frame do: as.data.frame(CO2ww.regions)
+
+## Plot
+#install.packages("plotly")
+library(plotly)
+# plot error bars as s.e.
+names(CO2ww.year)
+y <- plot_ly(CO2ww.year, x = ~CO2ww.year$year, y = ~CO2ww.year$tot_mean, 
+             type = 'bar', name = 'Total', error_y = ~list(type = "data", array = c(CO2ww.year$tot_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.year$fert_mean, name = 'Fertiliser',error_y = ~list(type = "data", array = c(CO2ww.year$fert_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.year$Hms_mean, name = 'Herbicide',error_y = ~list(type = "data", array = c(CO2ww.year$Hms_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.year$till_mean, name = 'Tillage',error_y = ~list(type = "data", array = c(CO2ww.year$till_se), color = '#000000')) %>%
+  layout(title = "Carbon emissions (winter wheat crops)",yaxis = list(title = 'Carbon emissions (kg CO<sub>2</sub> equivalent ha<sup>-1</sup>)'), xaxis = list(title = 'Black-grass density state'), barmode = 'group')
+y
+
+
+# Export:
+# to use plotly_IMAGE to export, you have to set your username and API key
+# API key can be found in your profile settings here https://plot.ly/settings/api
+Sys.setenv("plotly_username"="alexavarah") 
+Sys.setenv("plotly_api_key"="81832fmSTmYV8WDDP5Qe")
+
+plotly_IMAGE(y, width = 800, height = 500, format = "png", scale = 2,
+             out_file = "C:/Users/varah.a/Desktop/Documents/Black Grass Resistance Initiative/Carbon/BaselineEmissions/Baseline emissions by year.png")
+
+
+## calculate summary stats grouped by region ----
+#needs library(dplyr)
+CO2ww.regions <-  C %>% 
+                    group_by(region) %>%
+                      summarise_at(.vars = vars(tot,noH.tot,noT.tot,pest,fert,fuel,fuelfromtill,fuelfromspray,Hms,herb,till),
+                                   .funs = c(mean="mean", sd="sd" , se="standard.error"))
+
+head(CO2ww.regions)
+
+r <- plot_ly(CO2ww.regions, x = ~CO2ww.regions$region, y = ~CO2ww.regions$tot_mean, 
+             type = 'bar', name = 'Total', error_y = ~list(type = "data", array = c(CO2ww.year$tot_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.regions$fert_mean, name = 'Fertiliser',error_y = ~list(type = "data", array = c(CO2ww.regions$fert_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.regions$Hms_mean, name = 'Herbicide',error_y = ~list(type = "data", array = c(CO2ww.regions$Hms_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.regions$till_mean, name = 'Tillage',error_y = ~list(type = "data", array = c(CO2ww.regions$till_se), color = '#000000')) %>%
+  layout(title = "Regional carbon emissions (winter wheat crops)",yaxis = list(title = 'Carbon emissions (kg CO<sub>2</sub> equivalent ha<sup>-1</sup>)'), xaxis = list(title = 'Black-grass density state'), barmode = 'group')
+r
+
+plotly_IMAGE(r, width = 800, height = 500, format = "png", scale = 2,
+             out_file = "C:/Users/varah.a/Desktop/Documents/Black Grass Resistance Initiative/Carbon/BaselineEmissions/Baseline emissions by region.png")
+
+
+## calculate summary stats grouped by density state ----
+head(C)
+C$density <- factor(C$density, levels = c("low","medium","high","veryhigh"))
+CO2ww.density <-  C %>% 
+                    group_by(density) %>%
+                      summarise_at(.vars = vars(tot,noH.tot,noT.tot,pest,fert,fuel,fuelfromtill,fuelfromspray,Hms,herb,till),
+                                   .funs = c(mean="mean", sd="sd" , se="standard.error"))
+
+head(CO2ww.density)
+
+#names(CO2ww.density)
+d <- plot_ly(CO2ww.density, x = ~CO2ww.density$density, y = ~CO2ww.density$tot_mean, 
+             type = 'bar', name = 'Total', error_y = ~list(type = "data", array = c(CO2ww.density$tot_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.density$fert_mean, name = 'Fertiliser',error_y = ~list(type = "data", array = c(CO2ww.density$fert_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.density$Hms_mean, name = 'Herbicide',error_y = ~list(type = "data", array = c(CO2ww.density$Hms_se), color = '#000000')) %>%
+  add_trace(y = ~CO2ww.density$till_mean, name = 'Tillage',error_y = ~list(type = "data", array = c(CO2ww.density$till_se), color = '#000000')) %>%
+  layout(title = "Carbon emissions (winter wheat crops)",yaxis = list(title = 'Carbon emissions (kg CO<sub>2</sub> equivalent ha<sup>-1</sup>)'), xaxis = list(title = 'Black-grass density state'), barmode = 'group')
+d
+
+plotly_IMAGE(d, width = 800, height = 500, format = "png", scale = 2,
+             out_file = "C:/Users/varah.a/Desktop/Documents/Black Grass Resistance Initiative/Carbon/BaselineEmissions/Baseline emissions by density state.png")
+
+
+
+# the standard error of the sample mean is an estimate of how far the sample mean 
+# is likely to be from the population mean, 
+# whereas the standard deviation of the sample is the degree to which individuals within 
+# the sample differ from the sample mean
+
+
+
+
+
+###############################################################
+## SUPERCEDED
+# bar chart with emissions of diff sources by year
+
+# calculate mean costs per year
+suppressMessages(library(plyr))
+CO2ww.mean <- ddply(Cww, .(year), transform, tot.mean=mean(tot),justTtot.mean=mean(noH.tot),
+                                          justHtot.mean=mean(noT.tot),pest.mean=mean(pest),
+                                          fert.mean=mean(fert),
+                                          Hms.mean=mean(Hms),
+                                          fuel.mean=mean(fuel),
+                                          fuelfromT.mean=mean(fuelfromtill),
+                                          fuelfromspray.mean=mean(fuelfromspray))
+head(CO2ww.mean)
+# remove duplicated rows
+CO2ww.mean <- CO2ww.mean[!duplicated(CO2ww.mean[ ,3]), ]
+# get rid of unnecessary columns 
+CO2ww.mean <- within(CO2ww.mean, rm(id,field,tot,noH.tot,noT.tot,pest,fert,fuel,fuelfromtill,fuelfromspray,Hms))
+head(CO2ww.mean)
+
+
+## CHRIS this is where I start messing around trying to get what I want - not finished so 
+# probably not very helpful yet!! Will prob end up using ggplot instead of base graphics.
+
+# need std dev for error bars
+# .....
+
+head(Cww)
+myData <- aggregate(list(TOT=Cww$tot, FERT=Cww$fert, FT=Cww$fuelfromtill, HMS=Cww$Hms),
+                    by = list(yr = Cww$year),
+                    FUN = function(x) c(mean = mean(x), sd = sd(x),
+                                        n = length(x)))
+# list(TOT=Cww$tot, FERT=Cww$fert, FT=Cww$fuelfromtill, HMS=Cww$Hms)
+# turn matrix into df
+myData <- do.call(data.frame, myData)
+# calculate std err
+myData$TOT.se <- myData$TOT.sd / sqrt(myData$TOT.n)
+myData$FERT.se <- myData$FERT.sd / sqrt(myData$FERT.n)
+myData$FT.se <- myData$FT.sd / sqrt(myData$FT.n)
+myData$HMS.se <- myData$HMS.sd / sqrt(myData$HMS.n)
+head(myData)
+
+# plot bar chart to see contributions of fert, tillage and herb in comparison to total
+dodge <- position_dodge(width = 0.9)
+limits <- aes(ymax = myData$TOT.mean + myData$TOT.se,
+              ymin = myData$TOT.mean - myData$TOT.se)
+
+p <- ggplot(data = myData, aes(x = yr, y = TOT.mean, fill = yr))
+p + geom_bar(stat = "identity", position = dodge) +
+  geom_errorbar(limits, position = dodge, width = 0.25) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(),
+        axis.title.x=element_blank())
+
+
+# to select only certain columns:
+#library(dplyr)
+#select(df1, A, B, E)
+
+
+
